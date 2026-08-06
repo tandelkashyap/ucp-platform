@@ -1,0 +1,3 @@
+Demo user:   demo@example.com / password
+Merchant ID: 1
+Agent token: agt_AGklcMgZd5IiNFMN.AVzbH7jhHskgWtGCX8K88nt3xoAk0R8iLBPXzniT
