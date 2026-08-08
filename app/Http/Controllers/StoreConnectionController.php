@@ -56,6 +56,7 @@ class StoreConnectionController extends Controller
             'shopify' => $request->validated('credentials.shop_domain'),
             'woocommerce' => $request->validated('credentials.site_url'),
             'bigcommerce' => $request->validated('credentials.store_hash'),
+            'magento' => $request->validated('credentials.base_url'),
         };
     }
 }

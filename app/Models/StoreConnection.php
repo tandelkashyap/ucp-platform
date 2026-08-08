@@ -13,6 +13,7 @@ class StoreConnection extends Model
         'external_store_identifier',
         'credentials',
         'status',
+        'last_error',
         'last_synced_at',
     ];
 

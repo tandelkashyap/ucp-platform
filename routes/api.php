@@ -50,6 +50,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::post('merchants', [MerchantController::class, 'store']);
     Route::get('merchants', [MerchantController::class, 'index']);
+    Route::get('merchants/{merchant:slug}', [MerchantController::class, 'show']);
 
     Route::prefix('merchants/{merchant}')->group(function () {
         Route::get('store-connections', [StoreConnectionController::class, 'index']);

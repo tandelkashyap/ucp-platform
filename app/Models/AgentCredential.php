@@ -9,7 +9,7 @@ use Illuminate\Support\Str;
 class AgentCredential extends Model
 {
     protected $fillable = [
-        'merchant_id', 'agent_platform', 'key_id', 'secret_hash', 'scopes', 'status', 'expires_at',
+        'merchant_id', 'agent_platform', 'key_id', 'secret_hash', 'scopes', 'status', 'last_used_at', 'expires_at',
     ];
 
     protected $casts = [

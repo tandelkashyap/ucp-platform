@@ -13,6 +13,13 @@ class MerchantController extends Controller
         return response()->json($request->user()->merchants);
     }
 
+    public function show(Merchant $merchant)
+    {
+        $this->authorize('view', $merchant);
+
+        return response()->json($merchant);
+    }
+
     public function store(Request $request)
     {
         $validated = $request->validate([

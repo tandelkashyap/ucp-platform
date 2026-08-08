@@ -8,14 +8,14 @@ exist at all: register/login/logout.
 ## What's here
 
 ```
-database/migrations/     11 migrations — agent_credentials added last pass
+database/migrations/     13 migrations — magento enum + agent_credentials added recently
 app/Models/
   AgentCredential.php     key_id/secret_hash generation + verification
-  Merchant.php            agentCredentials()
+  Merchant.php            agentCredentials(), show()
 app/Contracts/            CommerceConnector.php
 app/Services/
   ConnectorManager.php
-  Connectors/              Shopify, WooCommerce, BigCommerce
+  Connectors/              Shopify, WooCommerce, BigCommerce, Magento
 app/Jobs/
   SyncMerchantCatalog.php, UpsertSyncedProduct.php, RecordOrderEvent.php,
   TestStoreConnection.php
@@ -195,6 +195,26 @@ decimal strings on one API and pre-multiplied integers on another; V3
 BigCommerce returns a JSON number. None of these are interchangeable —
 worth double-checking on any new connector rather than assuming.
 
+**Magento** validated the interface again — no signature changes needed —
+but is the most structurally different of the four so far: products are
+keyed by SKU (a string) in most endpoints, not a numeric/GID id the way
+Shopify, WooCommerce, and BigCommerce all do it. `getProduct(string
+$externalId)` already took a string, so nothing had to change, but it's
+worth knowing `$externalId` means something different depending which
+connector you're reading.
+
+More importantly, building this one exposed a gap that isn't specific to
+Magento at all: **none of the four connectors actually have a webhook
+*route* wired up.** `handleWebhook()` exists as an interface method on
+every connector, but there's no `POST /webhooks/{platform}/{merchant}`
+endpoint anywhere in `routes/api.php` that would receive a real inbound
+webhook and call it. The only sync path that's ever actually run end to
+end is `SyncMerchantCatalog`'s polling. Doesn't matter for Magento
+specifically — core Open Source has no webhook system to receive from
+anyway — but it means real-time sync doesn't work for *any* platform yet,
+which is worth knowing before assuming Shopify/WooCommerce/BigCommerce are
+further along than they are.
+
 ## What was actually verified here
 
 This sandbox can't reach Packagist (only npm/pip/crates/GitHub/Ubuntu
@@ -215,6 +235,33 @@ them with real orders. `BigCommerceConnector`'s payment-capture step
 the single least certain piece of this whole slice — verify it against
 BigCommerce's current docs before building on top of it, more so than
 anything else here.
+
+**Two real examples of that limitation, not just a hedge.** `php -l`
+checks syntax — it can't catch anything that only breaks at class-load
+time or at actual runtime, and this build has now hit both kinds:
+
+`TestStoreConnection` originally named its constructor property
+`$connection`, colliding with `Queueable`'s own internal `$connection`
+property (the *queue* connection a job runs on — redis, database, sync —
+a completely different thing). Trait composition conflicts are resolved
+at class-load time; nothing short of actually instantiating the class was
+ever going to catch it. Fixed by renaming to `$storeConnection`.
+
+Finding that one prompted an audit of every model's `$fillable` against
+its actual migration columns — and turned up two real, silent bugs from
+the exact same failure mode: a column added after the model was first
+written, with the column itself and the code writing to it both correct,
+but never added to `$fillable`. Mass assignment doesn't error on this —
+it just silently drops the field. `StoreConnection.last_error` had been
+silently discarded by every `update()` call since the column was added
+(exactly what produced the `NULL` you'd see querying it directly, even
+after a real failure). `AgentCredential.last_used_at` was the same bug in
+a second, quieter place — `AuthenticateAgent` calls `$credential->update(['last_used_at' => now()])`
+on every single authenticated agent request, and that write has been
+silently doing nothing since the credential system was built. Both are
+fixed now (both fields added to their model's `$fillable`), but — same
+caveat as the trait fix — confirmed correct by reading the code, not by
+watching it actually write to a database here.
 
 ## Getting this running locally (fresh install)
 
@@ -261,9 +308,31 @@ php artisan db:seed --class=DemoSeeder
 
 The seeder prints a demo user, a merchant with a `connected` store and two
 products, and a one-time agent token — copy that token immediately, it's
-not retrievable again. If Laragon doesn't pick up the project
-automatically, check Laragon's "www" list points at this folder and
-reload.
+not retrievable again. Note the seeder inserts that `connected` status
+directly; it doesn't go through `TestStoreConnection`, which is why the
+step below wasn't obvious until connecting a real store.
+
+**Run a queue worker, or nothing that dispatches a job will ever resolve.**
+`TestStoreConnection`, `SyncMerchantCatalog`, `UpsertSyncedProduct`, and
+`RecordOrderEvent`'s async dispatches are all queued jobs — connecting a
+store through the dashboard (or the API directly) pushes `TestStoreConnection`
+onto a queue and returns immediately with `status: connecting`. Nothing
+processes that queue unless something is told to:
+
+```bash
+php artisan queue:work
+```
+
+Leave that running in its own terminal. For faster local iteration instead,
+set `QUEUE_CONNECTION=sync` in `.env` — every queued job then runs inline,
+immediately, no worker needed. Convenient for testing, wrong for
+production (defeats the reason these are queued jobs in the first place —
+an agent-facing request shouldn't block on a slow external API call).
+Either way, a connection already stuck at `connecting` from before this
+was running won't resolve itself; disconnect and reconnect it.
+
+If Laragon doesn't pick up the project automatically, check Laragon's
+"www" list points at this folder and reload.
 
 ## One design decision worth flagging
 
@@ -275,11 +344,32 @@ token and a Storefront API token. Worth splitting into two internal HTTP
 clients once this connector has more than a couple of methods; noted
 inline in the file too.
 
+## Backend additions driven by the frontend, this pass
+
+Building the Next.js per-merchant dashboard page surfaced two real gaps
+here, same pattern as `GET /merchants` before it:
+
+- `MerchantController::show()` + `GET merchants/{merchant:slug}` — there
+  was a way to list a user's merchants and create one, but no way to fetch
+  a single merchant's details. Bound by `:slug` specifically on this one
+  route; every other `merchants/{merchant}/...` route still binds by id,
+  which the frontend resolves once via this endpoint and reuses.
+- `TestStoreConnection` now flips a `pending` merchant to `active` on its
+  first successful connection. Nothing did this before — a merchant could
+  be fully working (connected store, synced catalog, enabled capabilities)
+  and still show `pending` forever, which the dashboard's status badge
+  made obvious in a way a raw API response hadn't.
+
 ## Natural next steps
 
-- The Next.js dashboard itself — login/register screens, then the
-  store-connection and agent-credential flows, since those are the pieces
-  already fully built on the backend
+- **The missing webhook routes** — see above. `POST
+  /webhooks/{platform}/{merchant}` per platform (or one generic route
+  dispatching by platform), verifying each platform's own signature
+  scheme before calling `handleWebhook()`
+- For local Magento testing specifically: if the REST calls fail with an
+  SSL error, that's almost certainly the self-signed cert — set
+  `credentials.verify_ssl` to `false` on that one store_connection row via
+  the API or `tinker`, not by disabling verification anywhere more broadly
 - Per-credential rate limiting and a key-rotation flow
 - Line-item removal in `CartController::update()`
 - Real auth (Fortify/Breeze) and billing (Cashier), in place of

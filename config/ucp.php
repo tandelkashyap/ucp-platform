@@ -1,6 +1,7 @@
 <?php
 
 use App\Services\Connectors\BigCommerceConnector;
+use App\Services\Connectors\MagentoConnector;
 use App\Services\Connectors\ShopifyConnector;
 use App\Services\Connectors\WooCommerceConnector;
 
@@ -11,14 +12,15 @@ return [
     | Connector registry
     |--------------------------------------------------------------------
     | Maps each supported platform to the class implementing
-    | App\Contracts\CommerceConnector for it. All three of the platforms
-    | this was originally scoped for are now here — the next platform
-    | added is the fourth data point on whether the interface generalizes.
+    | App\Contracts\CommerceConnector for it. Four platforms in now —
+    | the next one added is the real test of whether this still
+    | generalizes past "the first four happened to fit."
     */
     'connectors' => [
         'shopify' => ShopifyConnector::class,
         'woocommerce' => WooCommerceConnector::class,
         'bigcommerce' => BigCommerceConnector::class,
+        'magento' => MagentoConnector::class,
     ],
 
     /*
