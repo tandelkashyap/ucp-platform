@@ -166,13 +166,19 @@ class WooCommerceConnector implements CommerceConnector
     {
         // Lives in capability_configs.config for the payment_token_exchange
         // capability — that column exists precisely for per-merchant
-        // settings like this one.
-        $config = $this->connection->merchant
+        // settings like this one. enabled is checked explicitly, not just
+        // config's presence — a merchant who disabled this capability
+        // shouldn't have a stale saved mapping silently keep working.
+        $capability = $this->connection->merchant
             ->capabilityConfigs()
             ->where('capability', 'payment_token_exchange')
-            ->value('config') ?? [];
+            ->first();
 
-        return $config['gateway_mapping'][$handlerId] ?? null;
+        if (! $capability?->enabled) {
+            return null;
+        }
+
+        return $capability->config['gateway_mapping'][$handlerId] ?? null;
     }
 
     private function normalizeProduct(array $product): array

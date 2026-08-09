@@ -306,11 +306,18 @@ php artisan migrate
 php artisan db:seed --class=DemoSeeder
 ```
 
-The seeder prints a demo user, a merchant with a `connected` store and two
-products, and a one-time agent token — copy that token immediately, it's
-not retrievable again. Note the seeder inserts that `connected` status
-directly; it doesn't go through `TestStoreConnection`, which is why the
-step below wasn't obvious until connecting a real store.
+The seeder now creates **two** demo merchants — `demo-store` (fake
+Shopify) and `demo-store-magento` (fake Magento) — each with a `connected`
+store, two products, and its own one-time agent token printed to the
+console. Copy both tokens immediately, neither is retrievable again. Note
+it inserts that `connected` status directly for both; it doesn't go
+through `TestStoreConnection` for either one, which is why the step below
+wasn't obvious until connecting a real store. If you have a real local
+Magento instance, connecting it for real through the dashboard (like this
+project's own testing did) proves far more than the seeded Magento entry
+ever will — the seeded one exists for quickly getting the dashboard back
+into a demo-able state without needing any real store running at all, not
+as a substitute for that.
 
 **Run a queue worker, or nothing that dispatches a job will ever resolve.**
 `TestStoreConnection`, `SyncMerchantCatalog`, `UpsertSyncedProduct`, and
@@ -366,10 +373,16 @@ here, same pattern as `GET /merchants` before it:
   /webhooks/{platform}/{merchant}` per platform (or one generic route
   dispatching by platform), verifying each platform's own signature
   scheme before calling `handleWebhook()`
-- For local Magento testing specifically: if the REST calls fail with an
-  SSL error, that's almost certainly the self-signed cert — set
-  `credentials.verify_ssl` to `false` on that one store_connection row via
-  the API or `tinker`, not by disabling verification anywhere more broadly
+- **Magento timeouts.** 30s (Laravel's HTTP client default) wasn't enough
+  for a local install — `MagentoConnector` now sets 60s explicitly. If
+  that's still not enough, or if the request times out with *zero* bytes
+  received rather than a slow-but-eventual response, that's more likely a
+  connectivity/DNS issue specific to running from a CLI queue worker than
+  Magento actually being slow — worth testing the identical request
+  directly in Postman (same URL, same Bearer token) to isolate whether
+  it's this code or the local environment. `verify_ssl` now has a checkbox
+  in `ConnectStoreForm` (Magento only) — no need to set it via the API
+  directly anymore.
 - Per-credential rate limiting and a key-rotation flow
 - Line-item removal in `CartController::update()`
 - Real auth (Fortify/Breeze) and billing (Cashier), in place of
