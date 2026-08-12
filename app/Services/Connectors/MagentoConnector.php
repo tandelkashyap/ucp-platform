@@ -7,6 +7,7 @@ use App\Models\StoreConnection;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
+use RuntimeException;
 
 /**
  * NOTE ON API SURFACE: Magento's REST API is the most different of the
@@ -95,6 +96,13 @@ class MagentoConnector implements CommerceConnector
 
     public function checkout(string $externalCartId, array $paymentToken, array $shippingAddress = []): array
     {
+        if (! ($shippingAddress['email'] ?? null)) {
+            throw new RuntimeException(
+                'Magento checkout requires an email address for a guest cart — '.
+                'include "email" in shipping_address.'
+            );
+        }
+
         if ($shippingAddress) {
             $this->restApi('POST', "/guest-carts/{$externalCartId}/shipping-information", [
                 'addressInformation' => [
@@ -110,15 +118,32 @@ class MagentoConnector implements CommerceConnector
         // offline payment method on a bare install with no gateway
         // configured — the right default for local testing specifically,
         // not something to carry into a real deployment unexamined.
+        //
+        // email is required here for a *guest* cart specifically — which
+        // is the only kind createCart() ever creates — since there's no
+        // logged-in customer for Magento to pull one from otherwise. Pulled
+        // from the shipping address since that's the only place UCP's
+        // checkout call gives this connector an email at all; a genuine
+        // design seam (address and buyer-email are different concerns
+        // being read from the same object), not a clean design choice.
         $orderId = $this->restApi('POST', "/guest-carts/{$externalCartId}/payment-information", [
             'paymentMethod' => ['method' => $paymentToken['handler_id'] ?? 'checkmo'],
             'billingAddress' => $shippingAddress ?: null,
+            'email' => $shippingAddress['email'] ?? null,
         ]);
 
-        return [
-            'external_order_id' => $orderId ? (string) $orderId : null,
-            'status' => $orderId ? 'confirmed' : 'pending',
-        ];
+        if (! $orderId) {
+            return ['external_order_id' => null, 'status' => 'pending'];
+        }
+
+        // Query Magento for the order's actual status rather than assume
+        // "an order ID came back" means "confirmed" — checkmo (and other
+        // offline payment methods) leave the order genuinely Pending until
+        // a human processes it in the admin, and that's correct on
+        // Magento's side, not a delay to paper over. Reuses the same
+        // mapOrderStatus() getOrderStatus() already applies, so the two
+        // paths can't silently disagree with each other later.
+        return $this->getOrderStatus((string) $orderId);
     }
 
     public function getOrderStatus(string $externalOrderId): array

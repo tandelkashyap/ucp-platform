@@ -383,6 +383,38 @@ here, same pattern as `GET /merchants` before it:
   it's this code or the local environment. `verify_ssl` now has a checkbox
   in `ConnectStoreForm` (Magento only) — no need to set it via the API
   directly anymore.
+- **Magento checkout needs an email address, and there was no field for
+  it anywhere.** Real finding, not speculation: `payment-information` on a
+  *guest* cart (the only kind `createCart()` ever makes) requires a
+  top-level `email`, and `checkout()` never sent one at all — caught by an
+  actual Magento 400 response (`"%fieldName" is required`, `fieldName:
+  email`), not found by inspection. Fixed by reading `email` out of
+  `shipping_address` (a real design seam — address and buyer-email are
+  different concerns sharing one object — not a clean fix) and failing
+  early with a clear message if it's missing, rather than letting
+  Magento's generic error surface after a round trip. Include `email` in
+  `shipping_address` on every Magento checkout call going forward.
+- **`checkout()` was lying about order status.** It returned `'confirmed'`
+  for any request that got an order ID back, regardless of Magento's
+  actual order state. First real order placed came back `'confirmed'`
+  from this code while Magento's own admin correctly showed it
+  `Pending` — `checkmo` and other offline payment methods don't
+  auto-capture, so `Pending` was Magento being right, not slow. Fixed:
+  `checkout()` now calls `getOrderStatus()` after a successful order
+  creation instead of guessing, so both paths run through the same
+  `mapOrderStatus()` and can't silently disagree with each other again.
+- **Still open, not yet root-caused**: the `shipping-information` call
+  that timed out earlier this session eventually succeeded, but the
+  request that finally worked took ~60 seconds — suspiciously close to
+  the timeout ceiling rather than comfortably under it. Likely still the
+  same underlying slowness, just finishing just in time rather than being
+  fixed. Worth checking Magento's enabled shipping methods (Stores →
+  Configuration → Sales → Shipping Methods) for a live-carrier method
+  with no real credentials configured, which is the kind of thing that
+  hangs rather than fails cleanly. A response this slow would likely
+  time out against a real agent orchestrator's own HTTP client even
+  though Magento eventually succeeds server-side — worth resolving before
+  trusting this path with anything beyond local testing.
 - Per-credential rate limiting and a key-rotation flow
 - Line-item removal in `CartController::update()`
 - Real auth (Fortify/Breeze) and billing (Cashier), in place of
