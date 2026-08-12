@@ -136,14 +136,19 @@ class MagentoConnector implements CommerceConnector
             return ['external_order_id' => null, 'status' => 'pending'];
         }
 
-        // Query Magento for the order's actual status rather than assume
-        // "an order ID came back" means "confirmed" — checkmo (and other
-        // offline payment methods) leave the order genuinely Pending until
-        // a human processes it in the admin, and that's correct on
-        // Magento's side, not a delay to paper over. Reuses the same
-        // mapOrderStatus() getOrderStatus() already applies, so the two
-        // paths can't silently disagree with each other later.
-        return $this->getOrderStatus((string) $orderId);
+        // Best-effort enrichment, not a hard requirement — the order
+        // already exists on Magento's side at this point regardless of
+        // what happens next. A failure here (wrong ACL permissions on the
+        // Integration token, a transient network blip, anything) must not
+        // make checkout() report total failure for an order that was
+        // actually created — that's exactly the gap that let a real order
+        // go unrecorded locally the first time this call needed a
+        // permission the Integration token didn't have.
+        try {
+            return $this->getOrderStatus((string) $orderId);
+        } catch (\Throwable) {
+            return ['external_order_id' => (string) $orderId, 'status' => 'pending'];
+        }
     }
 
     public function getOrderStatus(string $externalOrderId): array

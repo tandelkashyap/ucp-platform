@@ -403,6 +403,25 @@ here, same pattern as `GET /merchants` before it:
   `checkout()` now calls `getOrderStatus()` after a successful order
   creation instead of guessing, so both paths run through the same
   `mapOrderStatus()` and can't silently disagree with each other again.
+- **That fix immediately caused a more serious problem than the one it
+  solved.** The new `getOrderStatus()` call needs `Magento_Sales::actions_view`
+  on the Integration token — a permission never required before, and not
+  granted on the existing local Integration (set up for catalog/cart
+  testing, before checkout existed). The 401 it threw propagated all the
+  way up past `CheckoutController`, meaning `RecordOrderEvent` never ran —
+  **a real order can exist in Magento with zero corresponding row in this
+  system's own `orders` table.** If that happened, it's a real order
+  currently invisible to this platform; check Magento admin's order list
+  against what's actually in the local `orders` table if in doubt. Fixed
+  properly, not just patched: the `getOrderStatus()` call inside
+  `checkout()` is now wrapped in its own try/catch. Order creation
+  (`payment-information` succeeding) is what actually matters and always
+  returns; fetching live status afterward is best-effort enrichment that
+  falls back to `'pending'` on any failure, rather than a hard dependency
+  that can take the whole checkout down. Also grant `Magento_Sales::actions_view`
+  (or just check "All") on the Integration in Magento admin — the code fix
+  prevents this from being catastrophic again, but the underlying 401 is
+  still worth actually resolving, not just tolerated.
 - **Still open, not yet root-caused**: the `shipping-information` call
   that timed out earlier this session eventually succeeded, but the
   request that finally worked took ~60 seconds — suspiciously close to
